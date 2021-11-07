@@ -184,23 +184,29 @@ mod tests {
     use warp::test;
 
     #[tokio::test]
-    async fn test_html_connection() -> Result<(), warp::Rejection> {
+    async fn test_html_connection() {
         let index = index();
 
-        let value = test::request().filter(&index).await?;
-        // assert_eq!(String::from(value), INDEX_HTML);
+        let response = test::request().reply(&index).await;
 
-        Ok(())
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.body(), INDEX_HTML);
     }
 
-    // #[tokio::test]
-    // async fn test_ws_connection() {
-    //     let chat = chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
+    #[tokio::test]
+    async fn test_ws_connection() {
+        let chat = chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
 
-    //     test::ws()
-    //         .path("/chat")
-    //         .handshake(chat)
-    //         .await
-    //         .expect("Handshake failed");
-    // }
+        test::ws()
+            .path("/chat/room1")
+            .handshake(chat)
+            .await
+            .expect("Handshake failed");
+
+        test::ws()
+            .path("/chat/room10")
+            .handshake(chat)
+            .await
+            .expect("Handshake failed");
+    }
 }

@@ -1,8 +1,10 @@
-pub mod db;
-pub mod html;
+use bi_chat::db;
+use bi_chat::html::INDEX_HTML;
+use rusqlite::params;
 
 use std::{
     collections::HashMap,
+    path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -47,8 +49,9 @@ async fn main() -> Result<(), anyhow::Error> {
     // Spawning of a dedicated task to handle DB writes
     let (db_tx, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
         mpsc::unbounded_channel();
-    let mut db_rx = UnboundedReceiverStream::new(db_rx);
-    let db_manager = spawn_db(db_rx).await;
+    let db_rx = UnboundedReceiverStream::new(db_rx);
+    // Need to wait till DB connection established
+    let db_manager = spawn_db(&Path::new("./main.db"), db_rx);
 
     // We maintain the hierarchy that each `Room` contains `Users`
     // Any message that is sent to a `Room` should be broadcast to all `Users`.
@@ -130,7 +133,7 @@ async fn user_connected(
     }
 
     // TODO: is the lock on rooms held until here?? bad
-    user_disconnected(user_id, &users).await;
+    user_disconnected(user_id, &rooms, &chat_room).await;
 }
 
 // Decouple from DB stuff -- look at channels
@@ -170,9 +173,15 @@ async fn user_message(
     Ok(())
 }
 
-async fn user_disconnected(user_id: usize, users: &Users) {
+async fn user_disconnected(user_id: usize, rooms: &Rooms, chat_room: &str) {
     eprintln!("User disconnected: {}", user_id);
 
+    let users = rooms
+        .write()
+        .await
+        .get(chat_room)
+        .map(|u| u.clone())
+        .unwrap_or_else(|| Users::default());
     users.write().await.remove(&user_id);
 }
 
@@ -227,7 +236,7 @@ mod tests {
         let (_, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
             mpsc::unbounded_channel();
         let db_rx = UnboundedReceiverStream::new(db_rx);
-        let db_conn = spawn_db(db_rx);
+        let db_conn = spawn_db(&Path::new("./test.db"), db_rx);
 
         // Sender is dropped immediately above, hence this should return without any errors
         db_conn.await.expect("Failed to join DB thread").unwrap();

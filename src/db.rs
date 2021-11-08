@@ -1,12 +1,14 @@
+use std::path::Path;
+
 use futures_util::StreamExt;
 use rusqlite::{params, Connection};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[derive(Debug)]
 pub struct ChatMessage {
-    user_id: usize,
-    room_name: String,
-    message: String,
+    pub user_id: usize,
+    pub room_name: String,
+    pub message: String,
 }
 
 impl ChatMessage {
@@ -19,12 +21,13 @@ impl ChatMessage {
     }
 }
 
-pub async fn spawn_db(
+pub fn spawn_db(
+    db_path: &'static Path,
     mut db_rx: UnboundedReceiverStream<ChatMessage>,
 ) -> tokio::task::JoinHandle<Result<(), rusqlite::Error>> {
     tokio::task::spawn(async move {
         let conn =
-            Connection::open("./test.db").expect("Unable to establish connection to DB. Exiting");
+            Connection::open(db_path).expect("Unable to establish connection to DB. Exiting");
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS chat_messages (

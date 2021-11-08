@@ -11,7 +11,6 @@ use std::{
 
 use db::{spawn_db, ChatMessage};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use html::INDEX_HTML;
 use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender},
     RwLock,
@@ -208,5 +207,29 @@ mod tests {
             .handshake(chat)
             .await
             .expect("Handshake failed");
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn test_ws_connection_panics() {
+        let chat = chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
+
+        // Should panic, since no room specified -- default should be 'public'
+        test::ws()
+            .path("/chat")
+            .handshake(chat)
+            .await
+            .expect("Handshake failed");
+    }
+
+    #[tokio::test]
+    async fn test_db_connection() {
+        let (_, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
+            mpsc::unbounded_channel();
+        let db_rx = UnboundedReceiverStream::new(db_rx);
+        let db_conn = spawn_db(db_rx);
+
+        // Sender is dropped immediately above, hence this should return without any errors
+        db_conn.await.expect("Failed to join DB thread").unwrap();
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "bi-chat"
+name = "bi_chat"
 version = "0.1.0"
 authors = ["iobtl <tedmundhtl@gmail.com>"]
 edition = "2018"

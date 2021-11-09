@@ -62,7 +62,7 @@ fn test_db_single_insert() {
 #[test]
 // Mainly tests that DB can handle multiple  requests
 fn test_db_multiple_inserts() {
-    const TOTAL_ROWS: usize = 1000000;
+    const TOTAL_ROWS: usize = 1_000_000;
 
     let db_path = Path::new("./test_multiple.db");
     if db_path.exists() {
@@ -83,6 +83,61 @@ fn test_db_multiple_inserts() {
         tx.send(ChatMessage::new(user_id, room_name, message))
             .expect("Receiver disconnected!");
     }
+
+    drop(db_tx);
+
+    db_handle.join().unwrap().unwrap();
+
+    // Establish another connection to check if rows are properly inserted
+    let conn = Connection::open(&db_path).expect("Unable to establish connection to DB.");
+    let mut stmt = conn
+        .prepare("SELECT user_id, room_name, message FROM chat_messages")
+        .unwrap();
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ChatMessage {
+                user_id: row.get(0).expect("user_id not found!"),
+                room_name: row.get(1).expect("room_name not found!"),
+                message: row.get(2).expect("message not found!"),
+            })
+        })
+        .expect("Query failed")
+        .map(|row| row.unwrap())
+        .collect::<Vec<ChatMessage>>();
+
+    assert_eq!(rows.len(), TOTAL_ROWS);
+
+    std::fs::remove_file(db_path).unwrap();
+}
+
+#[test]
+// Mainly tests that DB can handle many requests at once -- also for channel bottleneck
+fn test_db_parallel_inserts() {
+    use rayon::prelude::*;
+
+    const TOTAL_ROWS: usize = 1_000_000;
+
+    let db_path = Path::new("./test_parallel.db");
+    if db_path.exists() {
+        std::fs::remove_file(db_path).unwrap();
+    }
+    let (db_tx, db_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
+
+    let user_id = 1;
+    let room_name = String::from("TestRoom");
+    let message = String::from("Hello there");
+
+    // Simulate many requests at once
+    (0..TOTAL_ROWS).into_par_iter().for_each(|_| {
+        let tx = db_tx.clone();
+        let room_name = room_name.clone();
+        let message = message.clone();
+        tx.send(ChatMessage::new(user_id, room_name, message))
+            .expect("Receiver disconnected!");
+    });
 
     drop(db_tx);
 

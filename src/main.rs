@@ -38,6 +38,29 @@ fn index(
     warp::path::end().map(|| warp::reply::html(INDEX_HTML))
 }
 
+struct User {
+    user_id: usize,
+    chat_room: String,
+    tx: UnboundedSender<Message>,
+    db_tx: UnboundedSender<ChatMessage>,
+}
+
+impl User {
+    pub fn new(
+        user_id: usize,
+        chat_room: String,
+        tx: UnboundedSender<Message>,
+        db_tx: UnboundedSender<ChatMessage>,
+    ) -> Self {
+        User {
+            user_id,
+            chat_room,
+            tx,
+            db_tx,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Spawning of a dedicated task to handle DB writes
@@ -53,18 +76,17 @@ async fn main() -> Result<(), anyhow::Error> {
     let db_tx = warp::any().map(move || db_tx.clone());
 
     let chat = chat()
-        .and(rooms)
         .and(db_tx)
-        .map(|ws: Ws, chat_room, rooms, db_tx| {
-            // Handle Ws message size here
-            ws.on_upgrade(move |socket| user_connected(socket, chat_room, rooms, db_tx))
+        .and(rooms)
+        .map(|ws: Ws, chat_room, db_tx, rooms| {
+            ws.on_upgrade(move |socket| user_connected(socket, chat_room, db_tx, rooms))
         });
-    // let chat = chat(rooms);
 
     let index = index();
 
     let routes = index.or(chat);
 
+    println!("Serving!");
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 
     db_handle.join().expect("Failed to join on DB thread")?;
@@ -72,14 +94,37 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+async fn add_user_to_room(new_user: &User, rooms: &Rooms) {
+    let mut room = rooms.write().await;
+    let users = room
+        .entry(new_user.chat_room.clone())
+        .or_insert(Users::default());
+    users
+        .write()
+        .await
+        .insert(new_user.user_id, new_user.tx.clone());
+}
+
+async fn remove_user_from_room(user: &User, rooms: &Rooms) {
+    let mut room = rooms.write().await;
+    let users = room
+        .entry(user.chat_room.clone())
+        .or_insert(Users::default());
+
+    users.write().await.remove(&user.user_id);
+
+    // Cleans up empty room
+    if users.read().await.is_empty() {
+        rooms.write().await.remove(&user.chat_room);
+    }
+}
+
 async fn user_connected(
     ws: WebSocket,
     chat_room: String,
-    rooms: Rooms,
     db_tx: UnboundedSender<ChatMessage>,
+    rooms: Rooms,
 ) {
-    let user_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
-    // let room_id = NEXT_ROOM_ID.fetch_add(1, Ordering::Relaxed);
     println!("Joining room: {}", &chat_room);
 
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
@@ -87,6 +132,10 @@ async fn user_connected(
     // Create unbounded channel to handle buffering and consuming of messages
     let (tx, rx) = mpsc::unbounded_channel();
     let mut rx = UnboundedReceiverStream::new(rx);
+
+    let user_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
+    let new_user = User::new(user_id, chat_room, tx, db_tx);
+    add_user_to_room(&new_user, &rooms).await;
 
     // Dedicated thread to listen and buffer incoming messages using Tokio channels
     // Then feeds into WS sink -> WS stream (to be consumed and displayed)
@@ -101,17 +150,6 @@ async fn user_connected(
         }
     });
 
-    // TODO: relook this part -- calling await with lock held!!!
-    let users = rooms
-        // Need write
-        .write()
-        .await
-        .get(&chat_room)
-        .map(|u| u.clone())
-        .unwrap_or_else(|| Users::default());
-    users.write().await.insert(user_id, tx);
-    rooms.write().await.insert(chat_room.clone(), users.clone());
-
     // "Broadcasting" message sent by this user to all other users in the same room
     while let Some(result) = user_ws_rx.next().await {
         let msg = match result {
@@ -121,45 +159,40 @@ async fn user_connected(
                 break;
             }
         };
-        user_message(user_id, msg, &rooms, &chat_room, db_tx.clone())
-            .await
-            .unwrap();
+
+        match user_message(&new_user, msg, &rooms).await {
+            Ok(_) => (),
+            Err(e) => eprintln!("Failed to send user message: {}", e),
+        }
     }
 
-    // TODO: is the lock on rooms held until here?? bad
-    user_disconnected(user_id, &rooms, &chat_room).await;
+    user_disconnected(new_user, &rooms).await;
 }
 
-// Decouple from DB stuff -- look at channels
-async fn user_message(
-    user_id: usize,
-    msg: Message,
-    rooms: &Rooms,
-    chat_room: &str,
-    db_tx: UnboundedSender<ChatMessage>,
-) -> Result<(), anyhow::Error> {
+// TODO: Tidy up parameters, maybe UserMessage struct or something
+async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), anyhow::Error> {
     let msg = if let Ok(s) = msg.to_str() {
         s
     } else {
         return Ok(());
     };
 
-    let new_msg = format!("<User#{}>: {}", user_id, msg);
-    db_tx.send(ChatMessage::new(
-        user_id,
-        chat_room.to_string(),
+    let new_msg = format!("<User#{}>: {}", user.user_id, msg);
+    user.db_tx.send(ChatMessage::new(
+        user.user_id,
+        String::from(&user.chat_room),
         new_msg.clone(),
     ))?;
 
     let users = rooms
         .read()
         .await
-        .get(chat_room)
+        .get(&user.chat_room)
         .map(|u| u.clone())
         .unwrap_or_else(|| Users::default());
-    // TODO: possible bottleneck? Blocks adding of a user to a room. Possible tradeoffs?
     for (&uid, tx) in users.read().await.iter() {
-        if user_id != uid {
+        if user.user_id != uid {
+            // This will only fail if the receiving user has already disconnected -- just skip over
             if let Err(_disconnected) = tx.send(Message::text(&new_msg)) {}
         }
     }
@@ -167,16 +200,10 @@ async fn user_message(
     Ok(())
 }
 
-async fn user_disconnected(user_id: usize, rooms: &Rooms, chat_room: &str) {
-    eprintln!("User disconnected: {}", user_id);
+async fn user_disconnected(user: User, rooms: &Rooms) {
+    eprintln!("User disconnected: {}", user.user_id);
 
-    let users = rooms
-        .write()
-        .await
-        .get(chat_room)
-        .map(|u| u.clone())
-        .unwrap_or_else(|| Users::default());
-    users.write().await.remove(&user_id);
+    remove_user_from_room(&user, rooms).await;
 }
 
 #[cfg(test)]

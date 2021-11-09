@@ -3,19 +3,19 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-pub type DbTx = UnboundedSender<ChatMessage>;
-pub type DbRx = UnboundedReceiver<ChatMessage>;
+pub type DbTx = UnboundedSender<DBMessage>;
+pub type DbRx = UnboundedReceiver<DBMessage>;
 
 #[derive(Debug)]
-pub struct ChatMessage {
+pub struct DBMessage {
     pub user_id: usize,
     pub room_name: String,
     pub message: String,
 }
 
-impl ChatMessage {
+impl DBMessage {
     pub fn new(user_id: usize, room_name: String, message: String) -> Self {
-        ChatMessage {
+        DBMessage {
             user_id,
             room_name,
             message,
@@ -25,7 +25,7 @@ impl ChatMessage {
 
 pub fn spawn_db(
     db_path: &'static Path,
-    mut db_rx: UnboundedReceiver<ChatMessage>,
+    mut db_rx: UnboundedReceiver<DBMessage>,
 ) -> Result<(), rusqlite::Error> {
     let mut conn =
         Connection::open(db_path).expect("Unable to establish connection to DB. Exiting");

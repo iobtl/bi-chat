@@ -2,7 +2,7 @@ use std::path::Path;
 
 use bi_chat::{
     self,
-    db::{spawn_db, ChatMessage},
+    db::{spawn_db, DBMessage},
 };
 
 use rusqlite::Connection;
@@ -22,7 +22,7 @@ fn test_db_single_insert() {
     let user_id = 1;
     let room_name = String::from("TestRoom");
     let message = String::from("Hello there");
-    let chat_message = ChatMessage::new(user_id, room_name.clone(), message.clone());
+    let chat_message = DBMessage::new(user_id, room_name.clone(), message.clone());
     db_tx
         .send(chat_message)
         .expect("Failed to send message to Receiver!");
@@ -39,7 +39,7 @@ fn test_db_single_insert() {
 
     let returned_msg = stmt
         .query_map([], |row| {
-            Ok(ChatMessage {
+            Ok(DBMessage {
                 user_id: row.get(0).expect("user_id not found!"),
                 room_name: row.get(1).expect("room_name not found!"),
                 message: row.get(2).expect("message not found!"),
@@ -80,7 +80,7 @@ fn test_db_multiple_inserts() {
         let tx = db_tx.clone();
         let room_name = room_name.clone();
         let message = message.clone();
-        tx.send(ChatMessage::new(user_id, room_name, message))
+        tx.send(DBMessage::new(user_id, room_name, message))
             .expect("Receiver disconnected!");
     }
 
@@ -96,7 +96,7 @@ fn test_db_multiple_inserts() {
 
     let rows = stmt
         .query_map([], |row| {
-            Ok(ChatMessage {
+            Ok(DBMessage {
                 user_id: row.get(0).expect("user_id not found!"),
                 room_name: row.get(1).expect("room_name not found!"),
                 message: row.get(2).expect("message not found!"),
@@ -104,7 +104,7 @@ fn test_db_multiple_inserts() {
         })
         .expect("Query failed")
         .map(|row| row.unwrap())
-        .collect::<Vec<ChatMessage>>();
+        .collect::<Vec<DBMessage>>();
 
     assert_eq!(rows.len(), TOTAL_ROWS);
 
@@ -135,7 +135,7 @@ fn test_db_parallel_inserts() {
         let tx = db_tx.clone();
         let room_name = room_name.clone();
         let message = message.clone();
-        tx.send(ChatMessage::new(user_id, room_name, message))
+        tx.send(DBMessage::new(user_id, room_name, message))
             .expect("Receiver disconnected!");
     });
 
@@ -151,7 +151,7 @@ fn test_db_parallel_inserts() {
 
     let rows = stmt
         .query_map([], |row| {
-            Ok(ChatMessage {
+            Ok(DBMessage {
                 user_id: row.get(0).expect("user_id not found!"),
                 room_name: row.get(1).expect("room_name not found!"),
                 message: row.get(2).expect("message not found!"),
@@ -159,7 +159,7 @@ fn test_db_parallel_inserts() {
         })
         .expect("Query failed")
         .map(|row| row.unwrap())
-        .collect::<Vec<ChatMessage>>();
+        .collect::<Vec<DBMessage>>();
 
     assert_eq!(rows.len(), TOTAL_ROWS);
 

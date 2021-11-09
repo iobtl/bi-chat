@@ -14,7 +14,7 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::ws::{Message, WebSocket};
 
-use crate::db::ChatMessage;
+use crate::db::DBMessage;
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -28,7 +28,7 @@ struct User {
     user_id: usize,
     chat_room: String,
     tx: UnboundedSender<Message>,
-    db_tx: UnboundedSender<ChatMessage>,
+    db_tx: UnboundedSender<DBMessage>,
 }
 
 impl User {
@@ -36,7 +36,7 @@ impl User {
         user_id: usize,
         chat_room: String,
         tx: UnboundedSender<Message>,
-        db_tx: UnboundedSender<ChatMessage>,
+        db_tx: UnboundedSender<DBMessage>,
     ) -> Self {
         User {
             user_id,
@@ -75,7 +75,7 @@ async fn remove_user_from_room(user: &User, rooms: &Rooms) {
 pub async fn user_connected(
     ws: WebSocket,
     chat_room: String,
-    db_tx: UnboundedSender<ChatMessage>,
+    db_tx: UnboundedSender<DBMessage>,
     rooms: Rooms,
 ) {
     println!("Joining room: {}", &chat_room);
@@ -131,7 +131,7 @@ async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), an
     };
 
     let new_msg = format!("<User#{}>: {}", user.user_id, msg);
-    user.db_tx.send(ChatMessage::new(
+    user.db_tx.send(DBMessage::new(
         user.user_id,
         String::from(&user.chat_room),
         new_msg.clone(),

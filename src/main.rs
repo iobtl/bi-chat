@@ -1,5 +1,5 @@
 use bi_chat::db;
-use bi_chat::html::INDEX_HTML;
+use bi_chat::routes;
 
 use std::{
     collections::HashMap,
@@ -25,18 +25,6 @@ const MAIN_DB_PATH: &str = "./main.db";
 
 type Users = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 type Rooms = Arc<RwLock<HashMap<String, Users>>>;
-
-// Move filters to another module
-fn chat() -> impl Filter<Extract = (Ws, String), Error = warp::Rejection> + Copy {
-    warp::path("chat")
-        .and(warp::ws())
-        .and(warp::path::param::<String>())
-}
-
-fn index(
-) -> impl Filter<Extract = (warp::reply::Html<&'static str>,), Error = warp::Rejection> + Copy {
-    warp::path::end().map(|| warp::reply::html(INDEX_HTML))
-}
 
 struct User {
     user_id: usize,
@@ -75,14 +63,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let db_tx = warp::any().map(move || db_tx.clone());
 
-    let chat = chat()
+    let chat = routes::chat()
         .and(db_tx)
         .and(rooms)
         .map(|ws: Ws, chat_room, db_tx, rooms| {
             ws.on_upgrade(move |socket| user_connected(socket, chat_room, db_tx, rooms))
         });
 
-    let index = index();
+    let index = routes::index();
 
     let routes = index.or(chat);
 
@@ -209,12 +197,13 @@ async fn user_disconnected(user: User, rooms: &Rooms) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bi_chat::html::INDEX_HTML;
     use futures::future;
     use warp::test;
 
     #[tokio::test]
     async fn test_html_connection() {
-        let index = index();
+        let index = routes::index();
 
         let response = test::request().reply(&index).await;
 
@@ -224,7 +213,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ws_connection() {
-        let chat = chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
+        let chat = routes::chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
 
         test::ws()
             .path("/chat/room1")
@@ -242,7 +231,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn test_ws_connection_panics() {
-        let chat = chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
+        let chat = routes::chat().map(|ws: Ws, _| ws.on_upgrade(|_| future::ready(())));
 
         // Should panic, since no room specified -- default should be 'public'
         test::ws()

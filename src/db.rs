@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use rusqlite::{params, Connection};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+pub type DbTx = UnboundedSender<ChatMessage>;
+pub type DbRx = UnboundedReceiver<ChatMessage>;
 
 #[derive(Debug)]
 pub struct ChatMessage {

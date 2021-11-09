@@ -27,6 +27,8 @@ websocat ws://localhost:3030/chat/:name
 
 Where `:name` represents the room name to connect to. (e.g. `websocat ws://localhost:3030/chat/public` connects to the 'public' room)
 
+![bi_terminal](https://user-images.githubusercontent.com/59901837/140879765-b46a53f7-ac7f-4f01-8837-bc817b9bd3c1.gif)
+
 # Testing
 
 For running tests, simply do:

@@ -23,10 +23,7 @@ impl DBMessage {
     }
 }
 
-pub fn spawn_db(
-    db_path: &'static Path,
-    mut db_rx: UnboundedReceiver<DBMessage>,
-) -> Result<(), rusqlite::Error> {
+pub fn spawn_db(db_path: &'static Path, mut db_rx: DbRx) -> Result<(), rusqlite::Error> {
     let mut conn =
         Connection::open(db_path).expect("Unable to establish connection to DB. Exiting");
 

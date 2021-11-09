@@ -14,7 +14,7 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::ws::{Message, WebSocket};
 
-use crate::db::DBMessage;
+use crate::db::{DBMessage, DbTx};
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
@@ -27,17 +27,12 @@ pub type UserRx = UnboundedReceiver<Message>;
 struct User {
     user_id: usize,
     chat_room: String,
-    tx: UnboundedSender<Message>,
-    db_tx: UnboundedSender<DBMessage>,
+    tx: UserTx,
+    db_tx: DbTx,
 }
 
 impl User {
-    pub fn new(
-        user_id: usize,
-        chat_room: String,
-        tx: UnboundedSender<Message>,
-        db_tx: UnboundedSender<DBMessage>,
-    ) -> Self {
+    pub fn new(user_id: usize, chat_room: String, tx: UserTx, db_tx: DbTx) -> Self {
         User {
             user_id,
             chat_room,
@@ -72,12 +67,7 @@ async fn remove_user_from_room(user: &User, rooms: &Rooms) {
     }
 }
 
-pub async fn user_connected(
-    ws: WebSocket,
-    chat_room: String,
-    db_tx: UnboundedSender<DBMessage>,
-    rooms: Rooms,
-) {
+pub async fn user_connected(ws: WebSocket, chat_room: String, db_tx: DbTx, rooms: Rooms) {
     println!("Joining room: {}", &chat_room);
 
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();

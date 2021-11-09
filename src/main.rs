@@ -1,6 +1,5 @@
 use bi_chat::db;
 use bi_chat::html::INDEX_HTML;
-use rusqlite::params;
 
 use std::{
     collections::HashMap,
@@ -13,10 +12,8 @@ use std::{
 
 use db::{spawn_db, ChatMessage};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use tokio::sync::{
-    mpsc::{self, UnboundedReceiver, UnboundedSender},
-    RwLock,
-};
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::RwLock;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::{
     ws::{Message, WebSocket, Ws},
@@ -24,7 +21,7 @@ use warp::{
 };
 
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
-// static NEXT_ROOM_ID: AtomicUsize = AtomicUsize::new(1);
+const MAIN_DB_PATH: &str = "./main.db";
 
 type Users = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 type Rooms = Arc<RwLock<HashMap<String, Users>>>;
@@ -34,9 +31,6 @@ fn chat() -> impl Filter<Extract = (Ws, String), Error = warp::Rejection> + Copy
     warp::path("chat")
         .and(warp::ws())
         .and(warp::path::param::<String>())
-    // .map(|ws: Ws, rooms, chat_room| {
-    //     ws.on_upgrade(move |socket| user_connected(socket, rooms, chat_room))
-    // })
 }
 
 fn index(
@@ -47,11 +41,9 @@ fn index(
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Spawning of a dedicated task to handle DB writes
-    let (db_tx, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
-        mpsc::unbounded_channel();
-    let db_rx = UnboundedReceiverStream::new(db_rx);
-    // Need to wait till DB connection established
-    let db_manager = spawn_db(&Path::new("./main.db"), db_rx);
+    let (db_tx, db_rx) = mpsc::unbounded_channel();
+    let db_path = Path::new(MAIN_DB_PATH);
+    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
 
     // We maintain the hierarchy that each `Room` contains `Users`
     // Any message that is sent to a `Room` should be broadcast to all `Users`.
@@ -74,6 +66,8 @@ async fn main() -> Result<(), anyhow::Error> {
     let routes = index.or(chat);
 
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+
+    db_handle.join().expect("Failed to join on DB thread")?;
 
     Ok(())
 }
@@ -231,14 +225,15 @@ mod tests {
             .expect("Handshake failed");
     }
 
-    #[tokio::test]
-    async fn test_db_connection() {
-        let (_, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
-            mpsc::unbounded_channel();
-        let db_rx = UnboundedReceiverStream::new(db_rx);
-        let db_conn = spawn_db(&Path::new("./test.db"), db_rx);
+    #[test]
+    fn test_db_connection() {
+        let (_, db_rx) = mpsc::unbounded_channel();
+        let db_path = Path::new("./test.db");
+        let db_conn = std::thread::spawn(move || spawn_db(db_path, db_rx));
 
         // Sender is dropped immediately above, hence this should return without any errors
-        db_conn.await.expect("Failed to join DB thread").unwrap();
+        db_conn.join().unwrap().unwrap();
+
+        std::fs::remove_file(db_path).unwrap();
     }
 }

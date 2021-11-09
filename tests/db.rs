@@ -6,21 +6,18 @@ use bi_chat::{
 };
 
 use rusqlite::Connection;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio::sync::mpsc;
 
-#[tokio::test]
+#[test]
 // Mainly tests that we can perform a proper insertion into the DB
-async fn test_db_single_insert() {
-    let (db_tx, db_rx): (UnboundedSender<ChatMessage>, UnboundedReceiver<ChatMessage>) =
-        mpsc::unbounded_channel();
-    let db_rx = UnboundedReceiverStream::new(db_rx);
+fn test_db_single_insert() {
     let db_path = Path::new("./test_single.db");
     if db_path.exists() {
-        std::fs::remove_file(&db_path).unwrap();
+        std::fs::remove_file(db_path).unwrap();
     }
+    let (db_tx, db_rx) = mpsc::unbounded_channel();
 
-    let db_conn = spawn_db(&Path::new("./test_single.db"), db_rx);
+    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
 
     let user_id = 1;
     let room_name = String::from("TestRoom");
@@ -32,7 +29,7 @@ async fn test_db_single_insert() {
 
     drop(db_tx);
 
-    db_conn.await.expect("Error joining threads").unwrap();
+    db_handle.join().unwrap().unwrap();
 
     // Establish another connection to check if rows are properly inserted
     let conn = Connection::open(&db_path).expect("Unable to establish connection to DB.");
@@ -58,4 +55,58 @@ async fn test_db_single_insert() {
     assert_eq!(returned_msg.user_id, user_id);
     assert_eq!(returned_msg.room_name, room_name);
     assert_eq!(returned_msg.message, message);
+
+    std::fs::remove_file(db_path).unwrap();
+}
+
+#[test]
+// Mainly tests that DB can handle multiple  requests
+fn test_db_multiple_inserts() {
+    const TOTAL_ROWS: usize = 1000000;
+
+    let db_path = Path::new("./test_multiple.db");
+    if db_path.exists() {
+        std::fs::remove_file(db_path).unwrap();
+    }
+    let (db_tx, db_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
+
+    let user_id = 1;
+    let room_name = String::from("TestRoom");
+    let message = String::from("Hello there");
+
+    for _ in 0..TOTAL_ROWS {
+        let tx = db_tx.clone();
+        let room_name = room_name.clone();
+        let message = message.clone();
+        tx.send(ChatMessage::new(user_id, room_name, message))
+            .expect("Receiver disconnected!");
+    }
+
+    drop(db_tx);
+
+    db_handle.join().unwrap().unwrap();
+
+    // Establish another connection to check if rows are properly inserted
+    let conn = Connection::open(&db_path).expect("Unable to establish connection to DB.");
+    let mut stmt = conn
+        .prepare("SELECT user_id, room_name, message FROM chat_messages")
+        .unwrap();
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ChatMessage {
+                user_id: row.get(0).expect("user_id not found!"),
+                room_name: row.get(1).expect("room_name not found!"),
+                message: row.get(2).expect("message not found!"),
+            })
+        })
+        .expect("Query failed")
+        .map(|row| row.unwrap())
+        .collect::<Vec<ChatMessage>>();
+
+    assert_eq!(rows.len(), TOTAL_ROWS);
+
+    std::fs::remove_file(db_path).unwrap();
 }

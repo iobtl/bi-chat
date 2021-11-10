@@ -11,12 +11,12 @@ use crate::{
 
 const MAIN_DB_PATH: &str = "./main.db";
 
-#[tokio::main]
 pub async fn run(port: u16) {
     // Spawning of a dedicated task to handle DB writes
     let (db_tx, db_rx) = mpsc::unbounded_channel();
     let db_path = Path::new(MAIN_DB_PATH);
-    std::thread::spawn(move || spawn_db(db_path, db_rx));
+    // let db_handler = std::thread::spawn(move || spawn_db(db_path, db_rx));
+    let db_handler = tokio::task::spawn_blocking(move || spawn_db(db_path, db_rx));
 
     // Defining stateful data + DB channel
     let rooms = Rooms::default();
@@ -35,7 +35,20 @@ pub async fn run(port: u16) {
 
     let routes = index.or(chat);
 
-    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
+    let shutdown = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Unable to bind ctrl-c signal handler");
+    };
+    let server = warp::serve(routes).run(([127, 0, 0, 1], port));
+
+    tokio::select! {
+        _ = server => {}
+        _ = shutdown => {
+            eprintln!("Aborting");
+            db_handler.abort();
+        }
+    }
 }
 
 #[cfg(test)]

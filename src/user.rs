@@ -112,7 +112,6 @@ pub async fn user_connected(ws: WebSocket, chat_room: String, db_tx: DbTx, rooms
     user_disconnected(new_user, &rooms).await;
 }
 
-// TODO: Tidy up parameters, maybe UserMessage struct or something
 async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), anyhow::Error> {
     let msg = if let Ok(s) = msg.to_str() {
         s
@@ -124,7 +123,7 @@ async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), an
     user.db_tx.send(DBMessage::new(
         user.user_id,
         String::from(&user.chat_room),
-        new_msg.clone(),
+        String::from(msg),
     ))?;
 
     let users = rooms

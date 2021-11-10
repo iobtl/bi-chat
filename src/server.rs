@@ -13,7 +13,7 @@ use crate::{
     db::spawn_db,
     routes,
     shutdown::Shutdown,
-    user::{Rooms, User},
+    user::{add_user_to_room, Rooms, User},
 };
 
 const MAIN_DB_PATH: &str = "./main.db";
@@ -54,23 +54,19 @@ pub async fn run(port: u16) {
                 let user_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
 
                 // Create unbounded channel to handle buffering and consuming of messages
-                let (tx, rx) = mpsc::unbounded_channel();
+                let (user_tx, user_rx) = mpsc::unbounded_channel();
 
                 let new_user = User {
                     user_id,
                     chat_room,
-                    tx,
+                    user_tx,
                     db_tx,
                 };
 
                 // Establish new connection
-                tokio::spawn(async move {
-                    if let Err(e) = new_user.listen(socket, rx, rooms).await {
-                        eprintln!(
-                            "Failed to establish connection for user {} to room {}: {}",
-                            &new_user.user_id, &new_user.chat_room, e
-                        );
-                    }
+                tokio::task::spawn(async move {
+                    add_user_to_room(&new_user, &rooms).await;
+                    new_user.listen(socket, user_rx, rooms).await
                 });
             })
         });

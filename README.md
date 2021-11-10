@@ -10,10 +10,18 @@ A simple server implementing chat-app like functionality.
 # Deploying
 
 ```bash
-cargo run --release
+cargo run --release <db-path>
 ```
 
-For development:
+For example:
+
+```bash
+cargo run --release main.db
+```
+
+Will start the server, creating `main.db` if it does not exists.
+
+# Development
 
 ```bash
 cargo watch -x run --clear --no-gitignore

@@ -26,7 +26,7 @@ impl DBMessage {
 }
 
 pub fn spawn_db(
-    db_path: &'static Path,
+    db_path: &Path,
     mut db_rx: DbRx,
     mut shutdown: Shutdown,
 ) -> Result<(), rusqlite::Error> {

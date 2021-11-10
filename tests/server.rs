@@ -1,16 +1,22 @@
+use std::path::PathBuf;
+
 use bi_chat::server;
 use futures::{FutureExt, SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::test]
 async fn same_room_users() {
+    const PORT: u16 = 3030;
+
+    let db_path = PathBuf::from("./main_same_room.db");
+    let spawn_db_path = db_path.clone();
     tokio::task::spawn(async move {
-        server::run(3030).await;
+        server::run(PORT, spawn_db_path).await;
     });
 
-    let uri = "ws://localhost:3030/chat/room1";
+    let uri = format!("ws://localhost:{}/chat/room1", PORT);
 
-    let res = tokio::try_join!(connect_async(uri), connect_async(uri));
+    let res = tokio::try_join!(connect_async(&uri), connect_async(&uri));
 
     let (mut stream1, mut stream2) = match res {
         Ok(((stream1, _), (stream2, _))) => (stream1, stream2),
@@ -29,19 +35,28 @@ async fn same_room_users() {
     let extracted_msg_text = received_msg_text.split(":").last().unwrap().trim();
 
     assert_eq!(msg_text, extracted_msg_text);
+
+    std::fs::remove_file(&db_path).expect(&format!(
+        "Failed to remove test db file: {}",
+        &db_path.to_str().unwrap()
+    ));
 }
 
 #[tokio::test]
 // Tests that users in different rooms do not receive messages from each other.
 async fn different_room_users() {
+    const PORT: u16 = 3031;
+
+    let db_path = PathBuf::from("./main_different_room.db");
+    let spawn_db_path = db_path.clone();
     tokio::task::spawn(async move {
-        server::run(3030).await;
+        server::run(PORT, spawn_db_path).await;
     });
 
-    let uri1 = "ws://localhost:3030/chat/room1";
-    let uri2 = "ws://localhost:3030/chat/room2";
+    let uri1 = format!("ws://localhost:{}/chat/room1", PORT);
+    let uri2 = format!("ws://localhost:{}/chat/room2", PORT);
 
-    let res = tokio::try_join!(connect_async(uri1), connect_async(uri2));
+    let res = tokio::try_join!(connect_async(&uri1), connect_async(&uri2));
 
     let (mut stream1, mut stream2) = match res {
         Ok(((stream1, _), (stream2, _))) => (stream1, stream2),
@@ -64,4 +79,9 @@ async fn different_room_users() {
 
     assert!(stream1.next().now_or_never().is_none());
     assert!(stream2.next().now_or_never().is_none());
+
+    std::fs::remove_file(&db_path).expect(&format!(
+        "Failed to remove test db file: {}",
+        &db_path.to_str().unwrap()
+    ));
 }

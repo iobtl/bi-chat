@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -16,11 +16,9 @@ use crate::{
     user::{add_user_to_room, Rooms, User},
 };
 
-const MAIN_DB_PATH: &str = "./main.db";
-
 static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
 
-pub async fn run(port: u16) {
+pub async fn run(port: u16, db_path: PathBuf) {
     // Broadcast channel for sending a shutdown message to all active connections
     let (notify_shutdown, _) = broadcast::channel(1);
     let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
@@ -29,10 +27,10 @@ pub async fn run(port: u16) {
 
     // Spawning of a dedicated thread to handle DB writes
     let (db_tx, db_rx) = mpsc::unbounded_channel();
-    let db_path = Path::new(MAIN_DB_PATH);
-    let db_handler = std::thread::spawn(move || {
+    std::thread::spawn(move || {
+        let db_path = db_path.clone();
         spawn_db(
-            db_path,
+            &db_path,
             db_rx,
             Shutdown::new(shutdown_listener, db_shutdown_complete_tx),
         )

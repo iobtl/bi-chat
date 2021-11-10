@@ -1,6 +1,6 @@
 # Overview
 
-A simple server allowing for the hosing of chat-app like functionality.
+A simple server implementing chat-app like functionality.
 
 # Requirements
 

@@ -18,3 +18,4 @@ warp = "0.3.1"
 
 [dev-dependencies]
 rayon = "1.5"
+tokio-tungstenite = "0.15.0"

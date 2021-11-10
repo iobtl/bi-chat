@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, DropBehavior};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+use crate::shutdown::Shutdown;
 
 pub type DbTx = UnboundedSender<DBMessage>;
 pub type DbRx = UnboundedReceiver<DBMessage>;
@@ -23,7 +25,11 @@ impl DBMessage {
     }
 }
 
-pub fn spawn_db(db_path: &'static Path, mut db_rx: DbRx) -> Result<(), rusqlite::Error> {
+pub fn spawn_db(
+    db_path: &'static Path,
+    mut db_rx: DbRx,
+    mut shutdown: Shutdown,
+) -> Result<(), rusqlite::Error> {
     let mut conn =
         Connection::open(db_path).expect("Unable to establish connection to DB. Exiting");
 
@@ -38,18 +44,35 @@ pub fn spawn_db(db_path: &'static Path, mut db_rx: DbRx) -> Result<(), rusqlite:
         [],
     )?;
 
-    let tx = conn.transaction()?;
-    {
-        let insert_query =
-            "INSERT INTO chat_messages (user_id, room_name, message) VALUES (?1, ?2, ?3)";
-        let mut stmt = tx.prepare_cached(insert_query)?;
-        while let Some(msg) = db_rx.blocking_recv() {
-            // TODO: Batch inserts as an improvement?
+    let insert_query =
+        "INSERT INTO chat_messages (user_id, room_name, message) VALUES (?1, ?2, ?3)";
+    let mut tx = conn.transaction()?;
+    tx.set_drop_behavior(DropBehavior::Commit);
+
+    let mut stmt = tx.prepare_cached(insert_query)?;
+
+    // While shutdown signal not received, keep listening for messages.
+    while !shutdown.is_shutdown() {
+        // Update shutdown state
+        shutdown.listen();
+        // If shutdown signal has been received, finish processing remaining
+        // messages.
+        // Else, continue listening for messages on `db_rx`.
+        if shutdown.is_shutdown() {
+            while let Ok(msg) = db_rx.try_recv() {
+                stmt.execute(params![msg.user_id, msg.room_name, msg.message])?;
+            }
+
+            break;
+        } else if let Ok(msg) = db_rx.try_recv() {
             stmt.execute(params![msg.user_id, msg.room_name, msg.message])?;
         }
     }
 
+    eprintln!("Shutdown signal received: closing DB connection");
+    drop(stmt);
     tx.commit()?;
+    conn.close().expect("Failed to close DB connection");
 
     Ok(())
 }

@@ -12,11 +12,12 @@ use tokio::sync::{
     RwLock,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use warp::ws::{Message, WebSocket};
+use warp::ws::{Message, WebSocket, Ws};
 
-use crate::db::{DBMessage, DbTx};
-
-static NEXT_USER_ID: AtomicUsize = AtomicUsize::new(1);
+use crate::{
+    db::{DBMessage, DbTx},
+    shutdown::Shutdown,
+};
 
 pub type Users = Arc<RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>>;
 pub type Rooms = Arc<RwLock<HashMap<String, Users>>>;
@@ -24,21 +25,61 @@ pub type Rooms = Arc<RwLock<HashMap<String, Users>>>;
 pub type UserTx = UnboundedSender<Message>;
 pub type UserRx = UnboundedReceiver<Message>;
 
-struct User {
-    user_id: usize,
-    chat_room: String,
-    tx: UserTx,
-    db_tx: DbTx,
+pub struct User {
+    pub user_id: usize,
+
+    pub chat_room: String,
+
+    pub tx: UserTx,
+
+    pub db_tx: DbTx,
 }
 
 impl User {
-    pub fn new(user_id: usize, chat_room: String, tx: UserTx, db_tx: DbTx) -> Self {
-        User {
-            user_id,
-            chat_room,
-            tx,
-            db_tx,
+    pub async fn listen(
+        &self,
+        ws: WebSocket,
+        mut rx: UserRx,
+        rooms: Rooms,
+    ) -> Result<(), anyhow::Error> {
+        println!("Joining room: {}", &self.chat_room);
+
+        let (mut user_ws_tx, mut user_ws_rx) = ws.split();
+
+        add_user_to_room(self, &rooms).await;
+
+        // Dedicated thread to listen and buffer incoming messages using Tokio channels
+        // Then feeds into WS sink -> WS stream (to be consumed and displayed)
+        tokio::task::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                user_ws_tx
+                    .send(message)
+                    .unwrap_or_else(|e| {
+                        eprintln!("WebSocket send error: {}", e);
+                    })
+                    .await;
+            }
+        });
+
+        // "Broadcasting" message sent by this user to all other users in the same room
+        while let Some(result) = user_ws_rx.next().await {
+            let msg = match result {
+                Ok(msg) => msg,
+                Err(e) => {
+                    eprintln!("Websocket error(uid={}): {}", self.user_id, e);
+                    break;
+                }
+            };
+
+            match user_message(self, msg, &rooms).await {
+                Ok(_) => (),
+                Err(e) => eprintln!("Failed to send user message: {}", e),
+            }
         }
+
+        user_disconnected(self, &rooms).await;
+
+        Ok(())
     }
 }
 
@@ -65,51 +106,6 @@ async fn remove_user_from_room(user: &User, rooms: &Rooms) {
     if users.read().await.is_empty() {
         rooms.write().await.remove(&user.chat_room);
     }
-}
-
-pub async fn user_connected(ws: WebSocket, chat_room: String, db_tx: DbTx, rooms: Rooms) {
-    println!("Joining room: {}", &chat_room);
-
-    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
-
-    // Create unbounded channel to handle buffering and consuming of messages
-    let (tx, rx) = mpsc::unbounded_channel();
-    let mut rx = UnboundedReceiverStream::new(rx);
-
-    let user_id = NEXT_USER_ID.fetch_add(1, Ordering::Relaxed);
-    let new_user = User::new(user_id, chat_room, tx, db_tx);
-    add_user_to_room(&new_user, &rooms).await;
-
-    // Dedicated thread to listen and buffer incoming messages using Tokio channels
-    // Then feeds into WS sink -> WS stream (to be consumed and displayed)
-    tokio::task::spawn(async move {
-        while let Some(message) = rx.next().await {
-            user_ws_tx
-                .send(message)
-                .unwrap_or_else(|e| {
-                    eprintln!("WebSocket send error: {}", e);
-                })
-                .await;
-        }
-    });
-
-    // "Broadcasting" message sent by this user to all other users in the same room
-    while let Some(result) = user_ws_rx.next().await {
-        let msg = match result {
-            Ok(msg) => msg,
-            Err(e) => {
-                eprintln!("Websocket error(uid={}): {}", user_id, e);
-                break;
-            }
-        };
-
-        match user_message(&new_user, msg, &rooms).await {
-            Ok(_) => (),
-            Err(e) => eprintln!("Failed to send user message: {}", e),
-        }
-    }
-
-    user_disconnected(new_user, &rooms).await;
 }
 
 async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), anyhow::Error> {
@@ -139,8 +135,8 @@ async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), an
     Ok(())
 }
 
-async fn user_disconnected(user: User, rooms: &Rooms) {
+async fn user_disconnected(user: &User, rooms: &Rooms) {
     eprintln!("User disconnected: {}", user.user_id);
 
-    remove_user_from_room(&user, rooms).await;
+    remove_user_from_room(user, rooms).await;
 }

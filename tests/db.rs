@@ -3,21 +3,32 @@ use std::path::Path;
 use bi_chat::{
     self,
     db::{spawn_db, DBMessage},
+    shutdown::Shutdown,
 };
 
 use rusqlite::Connection;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
-#[test]
+#[tokio::test]
 // Mainly tests that we can perform a proper insertion into the DB
-fn test_db_single_insert() {
+async fn test_db_single_insert() {
     let db_path = Path::new("./test_single.db");
     if db_path.exists() {
         std::fs::remove_file(db_path).unwrap();
     }
     let (db_tx, db_rx) = mpsc::unbounded_channel();
+    let (notify_shutdown, _) = broadcast::channel(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
+    let shutdown_listener = notify_shutdown.subscribe();
+    let db_shutdown_complete_tx = shutdown_complete_tx.clone();
 
-    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
+    let db_handle = std::thread::spawn(move || {
+        spawn_db(
+            db_path,
+            db_rx,
+            Shutdown::new(shutdown_listener, db_shutdown_complete_tx),
+        )
+    });
 
     let user_id = 1;
     let room_name = String::from("TestRoom");
@@ -28,6 +39,9 @@ fn test_db_single_insert() {
         .expect("Failed to send message to Receiver!");
 
     drop(db_tx);
+    drop(notify_shutdown);
+    drop(shutdown_complete_tx);
+    let _ = shutdown_complete_rx.recv().await;
 
     db_handle.join().unwrap().unwrap();
 
@@ -59,18 +73,28 @@ fn test_db_single_insert() {
     std::fs::remove_file(db_path).unwrap();
 }
 
-#[test]
+#[tokio::test]
 // Mainly tests that DB can handle multiple  requests
-fn test_db_multiple_inserts() {
+async fn test_db_multiple_inserts() {
     const TOTAL_ROWS: usize = 1_000_000;
 
     let db_path = Path::new("./test_multiple.db");
     if db_path.exists() {
         std::fs::remove_file(db_path).unwrap();
     }
-    let (db_tx, db_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (db_tx, db_rx) = mpsc::unbounded_channel();
+    let (notify_shutdown, _) = broadcast::channel(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
+    let shutdown_listener = notify_shutdown.subscribe();
+    let db_shutdown_complete_tx = shutdown_complete_tx.clone();
 
-    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
+    let db_handle = std::thread::spawn(move || {
+        spawn_db(
+            db_path,
+            db_rx,
+            Shutdown::new(shutdown_listener, db_shutdown_complete_tx),
+        )
+    });
 
     let user_id = 1;
     let room_name = String::from("TestRoom");
@@ -83,6 +107,9 @@ fn test_db_multiple_inserts() {
     }
 
     drop(db_tx);
+    drop(notify_shutdown);
+    drop(shutdown_complete_tx);
+    let _ = shutdown_complete_rx.recv().await;
 
     db_handle.join().unwrap().unwrap();
 
@@ -109,9 +136,9 @@ fn test_db_multiple_inserts() {
     std::fs::remove_file(db_path).unwrap();
 }
 
-#[test]
+#[tokio::test]
 // Mainly tests that DB can handle many requests at once -- also for channel bottleneck
-fn test_db_parallel_inserts() {
+async fn test_db_parallel_inserts() {
     use rayon::prelude::*;
 
     const TOTAL_ROWS: usize = 1_000_000;
@@ -122,7 +149,18 @@ fn test_db_parallel_inserts() {
     }
     let (db_tx, db_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let db_handle = std::thread::spawn(move || spawn_db(db_path, db_rx));
+    let (notify_shutdown, _) = broadcast::channel(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
+    let shutdown_listener = notify_shutdown.subscribe();
+    let db_shutdown_complete_tx = shutdown_complete_tx.clone();
+
+    let db_handle = std::thread::spawn(move || {
+        spawn_db(
+            db_path,
+            db_rx,
+            Shutdown::new(shutdown_listener, db_shutdown_complete_tx),
+        )
+    });
 
     let user_id = 1;
     let room_name = String::from("TestRoom");
@@ -130,13 +168,15 @@ fn test_db_parallel_inserts() {
 
     // Simulate many requests at once
     (0..TOTAL_ROWS).into_par_iter().for_each(|_| {
-        let tx = db_tx.clone();
-        tx.send(DBMessage::new(user_id, &room_name, &message))
+        db_tx
+            .send(DBMessage::new(user_id, &room_name, &message))
             .expect("Receiver disconnected!");
     });
 
     drop(db_tx);
-
+    drop(notify_shutdown);
+    drop(shutdown_complete_tx);
+    let _ = shutdown_complete_rx.recv().await;
     db_handle.join().unwrap().unwrap();
 
     // Establish another connection to check if rows are properly inserted

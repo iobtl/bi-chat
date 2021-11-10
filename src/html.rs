@@ -1,7 +1,7 @@
 pub static INDEX_HTML: &str = r#"<!DOCTYPE html>
 <html lang="en">
     <head>
-        <title>Warp Chat</title>
+        <title>BI Chat</title>
     </head>
     <body>
         <h1>Warp chat</h1>
@@ -13,7 +13,7 @@ pub static INDEX_HTML: &str = r#"<!DOCTYPE html>
         <script type="text/javascript">
         const chat = document.getElementById('chat');
         const text = document.getElementById('text');
-        const uri = 'ws://' + location.host + '/chat' + '/room2';
+        const uri = 'ws://' + location.host + '/chat' + '/public';
         const ws = new WebSocket(uri);
 
         function message(data) {

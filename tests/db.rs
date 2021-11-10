@@ -22,7 +22,7 @@ fn test_db_single_insert() {
     let user_id = 1;
     let room_name = String::from("TestRoom");
     let message = String::from("Hello there");
-    let chat_message = DBMessage::new(user_id, room_name.clone(), message.clone());
+    let chat_message = DBMessage::new(user_id, &room_name, &message);
     db_tx
         .send(chat_message)
         .expect("Failed to send message to Receiver!");
@@ -78,9 +78,7 @@ fn test_db_multiple_inserts() {
 
     for _ in 0..TOTAL_ROWS {
         let tx = db_tx.clone();
-        let room_name = room_name.clone();
-        let message = message.clone();
-        tx.send(DBMessage::new(user_id, room_name, message))
+        tx.send(DBMessage::new(user_id, &room_name, &message))
             .expect("Receiver disconnected!");
     }
 
@@ -133,9 +131,7 @@ fn test_db_parallel_inserts() {
     // Simulate many requests at once
     (0..TOTAL_ROWS).into_par_iter().for_each(|_| {
         let tx = db_tx.clone();
-        let room_name = room_name.clone();
-        let message = message.clone();
-        tx.send(DBMessage::new(user_id, room_name, message))
+        tx.send(DBMessage::new(user_id, &room_name, &message))
             .expect("Receiver disconnected!");
     });
 

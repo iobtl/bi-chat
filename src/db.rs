@@ -14,11 +14,11 @@ pub struct DBMessage {
 }
 
 impl DBMessage {
-    pub fn new(user_id: usize, room_name: String, message: String) -> Self {
+    pub fn new(user_id: usize, room_name: &str, message: &str) -> Self {
         DBMessage {
             user_id,
-            room_name,
-            message,
+            room_name: String::from(room_name),
+            message: String::from(message),
         }
     }
 }

@@ -120,11 +120,8 @@ async fn user_message(user: &User, msg: Message, rooms: &Rooms) -> Result<(), an
     };
 
     let new_msg = format!("<User#{}>: {}", user.user_id, msg);
-    user.db_tx.send(DBMessage::new(
-        user.user_id,
-        String::from(&user.chat_room),
-        String::from(msg),
-    ))?;
+    user.db_tx
+        .send(DBMessage::new(user.user_id, &user.chat_room, msg))?;
 
     let users = rooms
         .read()

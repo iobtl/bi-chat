@@ -100,8 +100,8 @@ impl User {
             .read()
             .await
             .get(&self.chat_room)
-            .map(|u| u.clone())
-            .unwrap_or_else(|| Users::default());
+            .cloned()
+            .unwrap_or_else(Users::default);
         for (&uid, tx) in users.read().await.iter() {
             if self.user_id != uid {
                 // This will only fail if the receiving user has already disconnected -- just skip over
@@ -118,7 +118,7 @@ pub async fn add_user_to_room(new_user: &User, rooms: &Rooms) {
     let mut room = rooms.write().await;
     let users = room
         .entry(new_user.chat_room.clone())
-        .or_insert(Users::default());
+        .or_insert_with(Users::default);
 
     users
         .write()

@@ -129,30 +129,23 @@ pub async fn add_user_to_room(new_user: &User, rooms: &Rooms) {
 // Removes a `User` from a room.
 // The "room" is also cleaned up if there are no users remaining.
 async fn remove_user_from_room(user: &User, rooms: &Rooms) {
-    {
-        let mut room = rooms.write().await;
-        let users = room
-            .entry(user.chat_room.clone())
-            .or_insert(Users::default());
-
-        users.write().await.remove(&user.user_id);
-    }
-
-    // Cleans up empty room
+    let mut room = rooms.write().await;
     let room_empty = {
-        let room = rooms.read().await;
-        let users = room
-            .get(&user.chat_room)
-            .map(|u| u.clone())
-            .unwrap_or_else(|| Users::default());
+        let mut users = room
+            .entry(user.chat_room.clone())
+            .or_insert_with(Users::default)
+            .write()
+            .await;
 
-        let empty = users.read().await.is_empty();
+        users.remove(&user.user_id);
 
-        empty
+        // Extra check to see if room is empty
+        users.is_empty()
     };
 
+    // Cleans up room, if empty
     if room_empty {
-        rooms.write().await.remove(&user.chat_room);
+        room.remove(&user.chat_room);
     }
 }
 

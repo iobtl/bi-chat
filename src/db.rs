@@ -76,3 +76,36 @@ pub fn spawn_db(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::{broadcast, mpsc};
+
+    #[test]
+    fn test_db_connection() {
+        let (_, db_rx) = mpsc::unbounded_channel();
+        let (notify_shutdown, _) = broadcast::channel(1);
+        let (shutdown_complete_tx, _) = mpsc::channel(1);
+
+        let shutdown_listener = notify_shutdown.subscribe();
+
+        let db_path = Path::new("./test.db");
+        let db_conn = std::thread::spawn(move || {
+            spawn_db(
+                db_path,
+                db_rx,
+                Shutdown::new(shutdown_listener, shutdown_complete_tx),
+            )
+        });
+
+        // Shutdown the connection and return
+        drop(notify_shutdown);
+
+        // Get return value from DB handle to ensure no errors during DB
+        // operations.
+        db_conn.join().unwrap().unwrap();
+
+        std::fs::remove_file(db_path).unwrap();
+    }
+}
